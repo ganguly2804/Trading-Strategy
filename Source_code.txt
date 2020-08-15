@@ -1,0 +1,118 @@
+'Excel version used: Microsoft Excel for Office 365
+'Steps:
+'1. Start trading on APIBridge
+'2. Setup APIBridge Signals in Excel
+'3. Change the default formula for A-SigType to =IF(K2, "LX", IF(L2,"SX",IF(I2, "LE", IF(J2,"SE","NA"))))
+'4. Change the default formula for A-Symbol to BTC/INR (text or string datatype)
+'5. Run Sub
+
+Public prevLTP As Double 'stores previous LTP
+Public Val As Integer 'used to determine end/start of timeslot
+Public TSL As Double 'The TSL points given by the user
+Public TSLhigh As Double 'stores the highest value after TSL order is placed
+Public TSLlow As Double 'stores the lowest value after TSL order is placed
+Public todayDate As String
+'We would use arrays for above values if there were multiple tickers
+
+Sub beginRefresh()
+    'TSL will trigger LX or SX
+    TSL = 500
+    todayDate = Date
+    'The first time slot initialized when the workbook is opened and the procedure is executed
+    'Val will be used to check if we complete one timeslot.
+    Val = Minute(Now()) Mod 15
+    'The close price is the last trade of the previous timeslot
+    'We store the close price in prevLTP
+    'In real life the close price is the previous day's last trade
+    'Initially the prevLTP is set to a dummy zero here as there is no previous timeslot
+    prevLTP = 0
+    'Resetting the trading booleans at the start of the day
+    Worksheets("Bitcoin").Range("I2").Value = False 'Long entry
+    Worksheets("Bitcoin").Range("J2").Value = False 'Short entry
+    Worksheets("Bitcoin").Range("K2").Value = False 'Long exit
+    Worksheets("Bitcoin").Range("L2").Value = False 'Short exit
+    
+    'Refreshing is a recursive function which will keep on refreshing the stocks data
+    'It is also reponsive for updating all the values in the table
+    Call Refreshing
+End Sub
+'end of beginRefresh sub
+
+Function Refreshing()
+    'Storing the current "Last traded price" or LTP in tempPrice before refreshing
+    tempPrice = Worksheets("Bitcoin").Range("E2").Value
+    'Refreshing to get the updated stocks value
+    ActiveWorkbook.RefreshAll
+    'Checking if there is a change in LTP after refreshing
+    If Not tempPrice = Worksheets("Bitcoin").Range("E2").Value Then
+        'Updating the prevLTP
+        prevLTP = tempPrice
+        'Call the UpdateTrades function which checks if any trading condition is applicable
+        Call UpdateTrades
+    End If
+    'Update the close, high, low and open values as per the new data
+    Call UpdateCells
+    
+    'Date
+    If Not todayDate = Date Then
+        'reset for new day
+        Call beginRefresh
+    Else
+        'Recursive call to this function after 30 seconds
+        Application.OnTime Now + TimeValue("00:00:20"), "Refreshing"
+    End If
+End Function
+'end of Refreshing function
+
+Function UpdateTrades()
+    'Getting the current LTP
+    currLTP = Worksheets("Bitcoin").Range("E2").Value
+    'Updating the TSLhigh - TSLhigh is only used after TSL order is placed
+    If currLTP > TSLhigh Then
+        TSLhigh = currLTP
+    End If
+    'Updating the TSLlow - TSLlow is only used after TSL order is placed
+    If currLTP < TSLlow Then
+        TSLlow = currLTP
+    End If
+    
+    '=IF(K2, "LX", IF(L2,"SX",IF(I2, "LE", IF(J2,"SE","NA")))) is the signal logic used
+    'This means that for sending signal Long exit, short exit, long entry, short entry cells are checked in this order
+    'This once LE or SE is given only the exit signal for it can be given as the cells' boolean values are not reset within the day
+    
+    'Long Entry if current LTP goes above the high and no prior LE OR SE
+    If currLTP > Worksheets("Bitcoin").Range("C2").Value And Not Worksheets("Bitcoin").Range("I2").Value And Not Worksheets("Bitcoin").Range("J2").Value Then
+        Worksheets("Bitcoin").Range("I2").Value = True 'Sends LE signal
+        TSLhigh = currLTP
+    'Short Entry if current LTP goes below the low and no prior LE OR SE
+    ElseIf currLTP < Worksheets("Bitcoin").Range("D2").Value And Not Worksheets("Bitcoin").Range("I2").Value And Not Worksheets("Bitcoin").Range("J2").Value Then
+        Worksheets("Bitcoin").Range("J2").Value = True 'Sends SE signal
+        TSLlow = currLTP
+    'Long exit triggered by the TSL
+    ElseIf currLTP < TSLhigh - TSL And Worksheets("Bitcoin").Range("I2").Value And Worksheets("Bitcoin").Range("I2").Value And Not Worksheets("Bitcoin").Range("J2").Value Then
+        Worksheets("Bitcoin").Range("K2").Value = True 'Sends LX signal
+    'Short exit triggered by the TSL
+    ElseIf currLTP > TSLlow + TSL And Worksheets("Bitcoin").Range("J2").Value And Not Worksheets("Bitcoin").Range("I2").Value And Worksheets("Bitcoin").Range("J2").Value Then
+        Worksheets("Bitcoin").Range("L2").Value = True 'Sends SX signal
+    End If
+End Function
+'end of UpdateTrades function
+
+Function UpdateCells()
+    'If timeslot period is over
+    If Minute(Now()) Mod 15 = Val Then
+        'Update closing price
+        Worksheets("Bitcoin").Range("B2").Value = prevLTP
+        'Update high, low and opening price as the current price
+        Worksheets("Bitcoin").Range("C2").Value = Worksheets("Bitcoin").Range("E2").Value
+        Worksheets("Bitcoin").Range("D2").Value = Worksheets("Bitcoin").Range("E2").Value
+        Worksheets("Bitcoin").Range("F2").Value = Worksheets("Bitcoin").Range("E2").Value
+    'Update the high price if current LTP exceeds the current high
+    ElseIf Worksheets("Bitcoin").Range("E2").Value > Worksheets("Bitcoin").Range("C2").Value Then
+        Worksheets("Bitcoin").Range("C2").Value = Worksheets("Bitcoin").Range("E2").Value
+    'Update the low price if current LTP falls below the current low
+    ElseIf Worksheets("Bitcoin").Range("E2").Value < Worksheets("Bitcoin").Range("D2").Value Then
+        Worksheets("Bitcoin").Range("D2").Value = Worksheets("Bitcoin").Range("E2").Value
+    End If
+End Function
+'end of UpdateCells function
